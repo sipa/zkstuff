@@ -136,6 +136,45 @@ def new_temp(val):
 def new_const(val):
     return Linear(val, val)
 
+def new_multiplication(l, r):
+    global cache
+    global eqs
+    if l.is_const():
+        return r * l.get_const()
+    if r.is_const():
+        return l * r.get_const()
+    if r < l:
+        (l, r) = (r, l)
+    key = "%s {*} %s" % (l, r)
+    if key in cache:
+        return cache[key]
+    lv, rv, ret = new_mul(l.get_real(), r.get_real())
+    assert(l.get_real() == lv.get_real())
+    assert(r.get_real() == rv.get_real())
+    eqs.append(l - lv)
+    eqs.append(r - rv)
+    cache[key] = ret
+    return ret
+
+def new_division(l, r):
+    global cache
+    global eqs
+    if r.is_const():
+        return l / r.get_const()
+    key = "%s {/} %s" % (l, r)
+    if key in cache:
+        return cache[key]
+    ret, rv, lv = new_mul(l.get_real() * modinv(r.get_real()), r.get_real())
+    assert(l.get_real() == lv.get_real())
+    assert(r.get_real() == rv.get_real())
+    eqs.append(l - lv)
+    eqs.append(r - rv)
+    cache[key] = ret
+    return ret
+
+def new_xor(l, r):
+    return l + r - new_multiplication(l, r)
+
 def parse_expression(s):
     global cache
     global eqs
@@ -143,6 +182,10 @@ def parse_expression(s):
     s = clean_expr(s)
     if s == "":
         raise Exception("Empty expression")
+    sp = split_expr_binary(s, ["^"])
+    if sp:
+        (left, op, right) = sp
+        return new_xor(parse_expression(left), parse_expression(right))
     sp = split_expr_binary(s, ["+", "-"])
     if sp:
         (left, op, right) = sp
@@ -158,29 +201,12 @@ def parse_expression(s):
         (left, op, right) = sp
         l = parse_expression(left)
         r = parse_expression(right)
-        if l.is_const() and op == '*':
-            return r * l.get_const()
-        if r.is_const() and op == '*':
-            return l * r.get_const()
-        if r.is_const() and op == '/':
-            return l / r.get_const()
-        if op == '*' and r < r:
-            (l, r) = (r, l)
-        key = "%s {%s} %s" % (l, op, r)
-        if key in cache:
-            return cache[key]
         if op == '*':
-            lv, rv, ret = new_mul(l.get_real(), r.get_real())
+            return new_multiplication(l, r)
         else:
-            ret, rv, lv = new_mul(l.get_real() * modinv(r.get_real()), r.get_real())
-        assert(l.get_real() == lv.get_real())
-        assert(r.get_real() == rv.get_real())
-        eqs.append(l - lv)
-        eqs.append(r - rv)
-        cache[key] = ret
-        return ret
+            return new_division(l, r)
     if s[0] == '-':
-        return parse_expression(s[1:], MODULUS - 1)
+        return parse_expression(s[1:]) * (MODULUS - 1)
     if VAR_RE.fullmatch(s):
         if s in varset:
             return varset[s]
