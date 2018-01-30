@@ -2,6 +2,7 @@
 
 import re
 import sys
+import time
 
 MODULUS = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 
@@ -13,24 +14,24 @@ class Linear:
     def __init__(self, real, const, *args):
         self.const = const % MODULUS
         self.real = real % MODULUS
-        self.var = []
-        args = sorted(args)
+        var = dict()
         for (name, val) in args:
             val = val % MODULUS
             if val == 0:
                 continue
-            if self.var and name == self.var[-1][0]:
-                val = (val + self.var[-1][1]) % MODULUS
-                if val == 0:
-                    self.var.pop()
-                else:
-                    self.var[-1] = (name, val)
+            if name not in var:
+                var[name] = val
             else:
-                self.var.append((name, val))
+                cval = (var[name] + val) % MODULUS
+                if cval != 0:
+                    var[name] = cval
+                else:
+                    del var[name]
+        self.var = var
 
     def __str__(self):
         terms = []
-        for (name, val) in self.var:
+        for (name, val) in self.var.items():
             if val == 1:
                 terms.append(name)
             elif (val + 1) % MODULUS == 0:
@@ -58,19 +59,19 @@ class Linear:
         return self.real
 
     def __add__(self, other):
-        return Linear((self.real + other.real) % MODULUS, (self.const + other.const) % MODULUS, *(self.var + other.var))
+        return Linear((self.real + other.real) % MODULUS, (self.const + other.const) % MODULUS, *(list(self.var.items()) + list(other.var.items())))
 
     def __sub__(self, other):
-        return Linear((self.real + MODULUS - other.real) % MODULUS, (self.const + MODULUS - other.const) % MODULUS, *(self.var + [(name, MODULUS - val) for (name, val) in other.var]))
+        return Linear((self.real + MODULUS - other.real) % MODULUS, (self.const + MODULUS - other.const) % MODULUS, *(list(self.var.items()) + [(name, MODULUS - val) for (name, val) in other.var.items()]))
 
     def __mul__(self, val):
-        return Linear(self.real * val, self.const * val, *[(name, v * val) for (name, v) in self.var])
+        return Linear(self.real * val, self.const * val, *[(name, v * val) for (name, v) in self.var.items()])
 
     def __div__(self, val):
         if val == 0:
             raise Exception("Division by zero")
         inv = modinv(val)
-        return Linear(self.real * inv, self.const * inv, *[(name, v * inv) for (name, v) in self.var])
+        return Linear(self.real * inv, self.const * inv, *[(name, v * inv) for (name, v) in self.var.items()])
 
     def __eq__(self, other):
         return self.const == other.const and self.var == other.var
@@ -78,10 +79,7 @@ class Linear:
     def __lt__(self, other):
         if self.const < other.const: return True
         if self.const > other.const: return False
-        if self.var < other.var: return True
-        if self.var > other.var: return False
-        assert(self.real == other.real)
-        return False
+        return self.__str__() < other.__str__()
 
 temp_count = 0
 mul_count = 0
@@ -214,55 +212,114 @@ def parse_statement(s):
     else:
         raise Exception("Cannot execute '%s'" % s)
 
+start = time.clock()
+print("[%f] Parsing..." % 0)
 lines = sys.stdin.readlines()
 for line in lines:
     parse_statement(line)
 
+print("[%f] Eliminating..." % (time.clock() - start))
 for tnum in range(1, temp_count + 1):
     tnam = "T%i" % tnum
     c = 0
+    cc = 0
     low = None
     leq = None
     for idx, eq in enumerate(eqs):
-        for name, val in eq.var:
-            if name == tnam:
-                if low is None or c > len(eq.var):
-                    low = idx
-                    c = len(eq.var)
-                    leq = eq * modinv(val)
-    if low is not None:
+        if tnam in eq.var:
+            cc += 1
+            if low is None or c > len(eq.var):
+                low = idx
+                c = len(eq.var)
+                leq = eq * modinv(eq.var[tnam])
+    if cc > 1:
         neweqs = eqs
         for idx, eq in enumerate(eqs):
-            for name, val in eq.var:
-                if name == tnam:
-                    neweqs[idx] = eq - leq * val
+            if idx != low and tnam in eq.var:
+                neweqs[idx] = eq - leq * eq.var[tnam]
+    if cc > 0:
         eqs = neweqs[:low] + neweqs[low+1:]
 
+print("[%f] Reducing..." % (time.clock() - start))
 for vnam in ["L%i" % i for i in range(1, mul_count + 1)] + ["R%i" % i for i in range(1, mul_count + 1)] + ["O%i" % i for i in range(1, mul_count + 1)]:
     c = 0
+    cc = 0
     low = None
     leq = None
     for idx, eq in enumerate(eqs):
-        for name, val in eq.var:
-            if name == vnam:
-                if low is None or c > len(eq.var):
-                    low = idx
-                    c = len(eq.var)
-                    leq = eq * modinv(val)
-    if low is not None:
+        if vnam in eq.var:
+            cc += 1
+            if low is None or c > len(eq.var):
+                low = idx
+                c = len(eq.var)
+                leq = eq * modinv(eq.var[vnam])
+    if cc > 1:
         neweqs = eqs
         for idx, eq in enumerate(eqs):
-             if low != idx:
-                 for name, val in eq.var:
-                     if name == vnam:
-                         neweqs[idx] = eq - leq * val
+            if idx != low and vnam in eq.var:
+                neweqs[idx] = eq - leq * eq.var[vnam]
         eqs = neweqs
 
-print("Reduced equations:")
-for eq in eqs:
-    print("* %s == %i" % (eq - Linear(eq.const, eq.const), eq.const))
+print("[%f] Maximizing 1s..." % (time.clock() - start))
+neweqs = eqs
+for idx, eq in enumerate(eqs):
+    counts = dict()
+    negations = dict()
+    max_count = 0
+    max_val = None
+    for name, val in eq.var.items():
+        negated = False
+        if val & 1 == 0:
+            val = MODULUS - val
+            negated = True
+        if val not in counts:
+            counts[val] = 1
+            negations[val] = 0
+        else:
+            counts[val] += 1
+        negations[val] += negated
+        if counts[val] > max_count:
+            max_count = counts[val]
+            max_val = val
+    if negations[max_val] * 2 > counts[max_val]:
+        neweqs[idx] = eq * (MODULUS - modinv(max_val))
+    else:
+        neweqs[idx] = eq * modinv(max_val)
+eqs = neweqs
+
+def encode_andytoshi_format():
+    global eqs
+    global mul_count
+    ret = "%i,0,%i;" % (mul_count, len(eqs))
+    for eq in eqs:
+        for pos, (name, val) in enumerate(eq.var.items()):
+            negative = False
+            if val * 2 > MODULUS:
+                negative = True
+                val = MODULUS - val
+            if negative:
+                ret += "-"
+            elif pos > 0:
+                ret += "+"
+            if val > 1:
+                ret += "%i*" % val
+            ret += name
+        ret += "="
+        val = eq.const
+        if val * 2 > MODULUS:
+            ret += "-"
+            val = MODULUS - val
+        ret += "%i;" % val
+    return ret
+
+
+print("[%f] Done" % (time.clock() - start))
+print()
+print(encode_andytoshi_format())
 
 print()
 print("Secret inputs:")
 for i in range(1, mul_count + 1):
-    print("* mul %i: %i * %i = %i" % (i, mul_data[i-1][0], mul_data[i-1][1], mul_data[i-1][2]))
+    print("L%i = %i" % (i, mul_data[i-1][0]))
+    print("R%i = %i" % (i, mul_data[i-1][1]))
+    print("O%i = %i" % (i, mul_data[i-1][0]))
