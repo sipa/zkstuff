@@ -218,19 +218,47 @@ def parse_expression(s):
         return new_const(int(s))
     raise Exception("Cannot parse '%s'" % s)
 
+def parse_expressions(s):
+    sp = split_expr_binary(s, [","])
+    if sp:
+        (left, op, right) = sp
+        return parse_expressions(left) + parse_expression(right)
+    return parse_expression(s)
+
 def parse_statement(s):
     global varset
     global eqs
-    sp = split_expr_binary(s, ["==", "="])
+    sp = split_expr_binary(s, [":=", "=:", "==", "="])
     if sp:
         (left, op, right) = sp
-        if op == '=':
+        if op == ':=':
+            bits = [x.strip() for x in left.split(",")]
+            for bit in bits:
+                if not VAR_RE.fullmatch(bit):
+                    raise Exception("Bit '%s' is not a valid name in %s" % (bit, op))
+            val = parse_expression(right)
+            assert(len(bits) < 256) # don't support less-than constraint
+            bitvars = [new_temp((val.get_real() >> i) & 1) for i in range(len(bits))]
+            for bitvar in bitvars:
+                eqs.append(new_multiplication(bitvar, bitvar - Linear(1,1)))
+            eqs.append((sum(var * (1 << i) for (i, var) in enumerate(bitvars)), Linear(0,0)) - val)
+            for i in range(len(bits)):
+                varset[bits[i]] = bitvars[i]
+        elif op == '=:':
+            bits = parse_expressions(right)
+            if not VAR_RE.fullmatch(left):
+                raise Exception("Int '%s' is not a valid name in %s" % (left, op))
+            assert(len(bits) < 256)
+            val = new_temp(sum(v.get_real() * (1 << i) for (i, v) in enumerate(bitvars)))
+            eqs.append(sum(var * (1 << i) for (i, var) in enumerate(bitvars)) - val)
+            varset[left] = val
+        elif op == '=':
             if VAR_RE.fullmatch(left):
                 expr = parse_expression(right)
                 varset[left] = expr
             else:
                 raise Exception("Assigning to non-variable '%s'" % left)
-        if op == '==':
+        elif op == '==':
             l = parse_expression(left)
             r = parse_expression(right)
             assert(l.get_real() == r.get_real())
