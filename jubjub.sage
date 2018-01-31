@@ -8,7 +8,18 @@ n = E.order()
 S = GF(n)
 half = 1 / S(2)
 
-bits = [random.randrange(2) for i in range(63)]
+SEED = "This is bulletproof"
+count = 510
+if len(sys.argv) > 1:
+    count = int(sys.argv[1])
+count -= count % 3
+
+bits = []
+for pos in range(count):
+    h = hashlib.sha256()
+    h.update(bytearray(SEED))
+    h.update(bytearray([pos & 255, pos >> 256]))
+    bits.append(ord(h.digest()[-1]) & 1)
 
 def hash_to_point(m):
     h = hashlib.sha256()

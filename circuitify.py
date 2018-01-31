@@ -269,7 +269,6 @@ def parse_statement(s):
     global varset
     global eqs
     s = s.strip()
-    print("STATEMENT %s" % s)
     if len(s) > 6 and s[0:6] == "debug ":
         expr = parse_expression(s[6:])
         print("DEBUG %s: %s [0x%x]\n" % (s[6:], expr, expr.get_real()))
