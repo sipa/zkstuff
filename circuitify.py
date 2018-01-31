@@ -117,7 +117,7 @@ def split_expr_binary(s, ops):
             depth -= 1
         elif depth == 0:
             for op in ops:
-                if i - len(op) >= 0 and s[i-len(op):i] == op:
+                if i - len(op) >= 1 and s[i-len(op):i] == op:
                     return (clean_expr(s[:i-len(op)]), op, clean_expr(s[i:]))
     return None
 
@@ -173,7 +173,7 @@ def new_division(l, r):
     return ret
 
 def new_xor(l, r):
-    return l + r - new_multiplication(l, r)
+    return l + r - new_multiplication(l, r) * 2
 
 def parse_expression(s):
     global cache
@@ -185,7 +185,11 @@ def parse_expression(s):
     sp = split_expr_binary(s, ["^"])
     if sp:
         (left, op, right) = sp
-        return new_xor(parse_expression(left), parse_expression(right))
+        l = parse_expression(left)
+        r = parse_expression(right)
+        ret = new_xor(l, r)
+        assert(ret.get_real() == l.get_real() ^ r.get_real())
+        return ret
     sp = split_expr_binary(s, ["+", "-"])
     if sp:
         (left, op, right) = sp
@@ -202,7 +206,9 @@ def parse_expression(s):
         l = parse_expression(left)
         r = parse_expression(right)
         if op == '*':
-            return new_multiplication(l, r)
+            ret = new_multiplication(l, r)
+            assert(ret.get_real() == l.get_real() * r.get_real())
+            return ret
         else:
             return new_division(l, r)
     if s[0] == '-':
@@ -222,12 +228,17 @@ def parse_expressions(s):
     sp = split_expr_binary(s, [","])
     if sp:
         (left, op, right) = sp
-        return parse_expressions(left) + parse_expression(right)
-    return parse_expression(s)
+        return parse_expressions(left) + [parse_expression(right)]
+    return [parse_expression(s)]
 
 def parse_statement(s):
     global varset
     global eqs
+    s = s.strip()
+    if len(s) > 6 and s[0:6] == "debug ":
+        expr = parse_expression(s[6:])
+        print("DEBUG %s: %s [0x%x]\n" % (s[6:], expr, expr.get_real()))
+        return
     sp = split_expr_binary(s, [":=", "=:", "==", "="])
     if sp:
         (left, op, right) = sp
@@ -238,10 +249,15 @@ def parse_statement(s):
                     raise Exception("Bit '%s' is not a valid name in %s" % (bit, op))
             val = parse_expression(right)
             assert(len(bits) < 256) # don't support less-than constraint
-            bitvars = [new_temp((val.get_real() >> i) & 1) for i in range(len(bits))]
-            for bitvar in bitvars:
-                eqs.append(new_multiplication(bitvar, bitvar - Linear(1,1)))
-            eqs.append((sum(var * (1 << i) for (i, var) in enumerate(bitvars)), Linear(0,0)) - val)
+            assert(val.get_real() >> len(bits) == 0)
+            if val.is_const():
+                bitvars = [Linear((val.get_real() >> i) & 1, (val.get_real() >> i) & 1) for i in range(len(bits))]
+            else:
+                bitvars = [new_temp((val.get_real() >> i) & 1) for i in range(len(bits))]
+                for i, bitvar in enumerate(bitvars):
+                    eqs.append(new_multiplication(bitvar, bitvar - Linear(1,1)))
+                    val = val - bitvar * (1 << i)
+                eqs.append(val)
             for i in range(len(bits)):
                 varset[bits[i]] = bitvars[i]
         elif op == '=:':
@@ -249,9 +265,19 @@ def parse_statement(s):
             if not VAR_RE.fullmatch(left):
                 raise Exception("Int '%s' is not a valid name in %s" % (left, op))
             assert(len(bits) < 256)
-            val = new_temp(sum(v.get_real() * (1 << i) for (i, v) in enumerate(bitvars)))
-            eqs.append(sum(var * (1 << i) for (i, var) in enumerate(bitvars)) - val)
-            varset[left] = val
+            real = 0
+            for i, bit in enumerate(bits):
+                assert(bit.get_real() == 0 or bit.get_real() == 1)
+                real = real + bit.get_real() * (1 << i)
+            if all(bit.is_const() for bit in bits):
+                val = Linear(real, real)
+                varset[left] = val
+            else:
+                val = new_temp(real)
+                varset[left] = val
+                for i, bit in enumerate(bits):
+                    val = val - bit * (1 << i)
+                eqs.append(val)
         elif op == '=':
             if VAR_RE.fullmatch(left):
                 expr = parse_expression(right)
@@ -261,41 +287,13 @@ def parse_statement(s):
         elif op == '==':
             l = parse_expression(left)
             r = parse_expression(right)
-            assert(l.get_real() == r.get_real())
+            if l.get_real() != r.get_real():
+                print("WARNING: in '%s', left is %i, right is %i" % (s, l.get_real(), r.get_real()))
             eqs.append(l - r)
     else:
         raise Exception("Cannot execute '%s'" % s)
 
-start = time.clock()
-print("[%f] Parsing..." % 0)
-lines = sys.stdin.readlines()
-for line in lines:
-    parse_statement(line)
-
-print("[%f] Eliminating..." % (time.clock() - start))
-for tnum in range(1, temp_count + 1):
-    tnam = "T%i" % tnum
-    c = 0
-    cc = 0
-    low = None
-    leq = None
-    for idx, eq in enumerate(eqs):
-        if tnam in eq.var:
-            cc += 1
-            if low is None or c > len(eq.var):
-                low = idx
-                c = len(eq.var)
-                leq = eq * modinv(eq.var[tnam])
-    if cc > 1:
-        neweqs = eqs
-        for idx, eq in enumerate(eqs):
-            if idx != low and tnam in eq.var:
-                neweqs[idx] = eq - leq * eq.var[tnam]
-    if cc > 0:
-        eqs = neweqs[:low] + neweqs[low+1:]
-
-print("[%f] Reducing..." % (time.clock() - start))
-for vnam in ["L%i" % i for i in range(1, mul_count + 1)] + ["R%i" % i for i in range(1, mul_count + 1)] + ["O%i" % i for i in range(1, mul_count + 1)]:
+def pivot_variable(eqs, vnam, eliminate=False):
     c = 0
     cc = 0
     low = None
@@ -308,11 +306,66 @@ for vnam in ["L%i" % i for i in range(1, mul_count + 1)] + ["R%i" % i for i in r
                 c = len(eq.var)
                 leq = eq * modinv(eq.var[vnam])
     if cc > 1:
-        neweqs = eqs
         for idx, eq in enumerate(eqs):
             if idx != low and vnam in eq.var:
-                neweqs[idx] = eq - leq * eq.var[vnam]
-        eqs = neweqs
+                eqs[idx] = eq - leq * eq.var[vnam]
+    if eliminate and cc > 0:
+        del eqs[low]
+
+def encode_andytoshi_format():
+    global eqs
+    global mul_count
+    ret = "%i,0,%i;" % (mul_count, len(eqs))
+    for eq in eqs:
+        for pos, (name, val) in enumerate(eq.var.items()):
+            ret += " "
+            negative = False
+            if val * 2 > MODULUS:
+                negative = True
+                val = MODULUS - val
+            if pos == 0 and negative:
+                ret += "-"
+            elif pos > 0 and negative:
+                ret += "- "
+            elif pos > 0:
+                ret += "+ "
+            if val > 1:
+                ret += "%i*" % val
+            ret += name
+        ret += " = "
+        val = (MODULUS - eq.const) % MODULUS
+        if val * 2 > MODULUS:
+            ret += "-"
+            val = MODULUS - val
+        ret += "%i;" % val
+    return ret
+
+start = time.clock()
+print("[%f] Parsing..." % 0)
+for line in sys.stdin:
+    parse_statement(line)
+
+print("[%f] %i multiplications, %i temporaries, %i constraints" % (time.clock() - start, mul_count, temp_count, len(eqs)))
+
+print("[%f] Eliminating..." % (time.clock() - start))
+tock = time.clock()
+for tnum in range(1, temp_count + 1):
+    pivot_variable(eqs, "T%i" % tnum, True)
+    now = time.clock()
+    if (now - tock > 10):
+        tock = now
+        print("[%f] Eliminated %i/%i" % (now - start, tnum, temp_count))
+
+print("[%f] %i multiplications, %i constraints" % (time.clock() - start, mul_count, len(eqs)))
+
+#print("[%f] Reducing..." % (time.clock() - start))
+#tock = time.clock()
+#for idx, vnam in enumerate(["L%i" % i for i in range(1, mul_count + 1)] + ["R%i" % i for i in range(1, mul_count + 1)] + ["O%i" % i for i in range(1, mul_count + 1)]):
+#    pivot_variable(eqs, vnam)
+#    now = time.clock()
+#    if (now - tock > 10):
+#        tock = now
+#        print("[%f] Reduced %i/%i" % (now - start, idx, mul_count * 3))
 
 print("[%f] Maximizing 1s..." % (time.clock() - start))
 neweqs = eqs
@@ -341,30 +394,6 @@ for idx, eq in enumerate(eqs):
         neweqs[idx] = eq * modinv(max_val)
 eqs = neweqs
 
-def encode_andytoshi_format():
-    global eqs
-    global mul_count
-    ret = "%i,0,%i;" % (mul_count, len(eqs))
-    for eq in eqs:
-        for pos, (name, val) in enumerate(eq.var.items()):
-            negative = False
-            if val * 2 > MODULUS:
-                negative = True
-                val = MODULUS - val
-            if negative:
-                ret += "-"
-            elif pos > 0:
-                ret += "+"
-            if val > 1:
-                ret += "%i*" % val
-            ret += name
-        ret += "="
-        val = eq.const
-        if val * 2 > MODULUS:
-            ret += "-"
-            val = MODULUS - val
-        ret += "%i;" % val
-    return ret
 
 
 print("[%f] Done" % (time.clock() - start))
@@ -376,4 +405,4 @@ print("Secret inputs:")
 for i in range(1, mul_count + 1):
     print("L%i = %i" % (i, mul_data[i-1][0]))
     print("R%i = %i" % (i, mul_data[i-1][1]))
-    print("O%i = %i" % (i, mul_data[i-1][0]))
+    print("O%i = %i" % (i, mul_data[i-1][2]))
