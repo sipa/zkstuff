@@ -8,7 +8,7 @@ n = E.order()
 S = GF(n)
 half = 1 / S(2)
 
-bits = [random.randrange(2) for i in range(510)]
+bits = [random.randrange(2) for i in range(63)]
 
 def hash_to_point(m):
     h = hashlib.sha256()

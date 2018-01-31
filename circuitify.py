@@ -154,14 +154,16 @@ def split_expr_binary(s, ops):
 def new_mul(vall, valr):
     global mul_count
     global mul_data
-    mul_count += 1
     mul_data.append((vall % MODULUS, valr % MODULUS, (vall * valr) % MODULUS))
-    return (Linear(vall, 0, ("L%i" % mul_count, 1)), Linear(valr, 0, ("R%i" % mul_count, 1)), Linear(vall * valr, 0, ("O%i" % mul_count, 1)))
+    ret = (Linear(vall, 0, ("L%i" % mul_count, 1)), Linear(valr, 0, ("R%i" % mul_count, 1)), Linear(vall * valr, 0, ("O%i" % mul_count, 1)))
+    mul_count += 1
+    return ret
 
 def new_temp(val):
     global temp_count
+    ret = Linear(val, 0, ("T%i" % temp_count, 1))
     temp_count += 1
-    return Linear(val, 0, ("T%i" % temp_count, 1))
+    return ret
 
 def new_const(val):
     return Linear(val, val)
@@ -267,6 +269,7 @@ def parse_statement(s):
     global varset
     global eqs
     s = s.strip()
+    print("STATEMENT %s" % s)
     if len(s) > 6 and s[0:6] == "debug ":
         expr = parse_expression(s[6:])
         print("DEBUG %s: %s [0x%x]\n" % (s[6:], expr, expr.get_real()))
@@ -283,11 +286,11 @@ def parse_statement(s):
             assert(len(bits) < 256) # don't support less-than constraint
             assert(val.get_real() >> len(bits) == 0)
             if val.is_const():
-                bitvars = [Linear((val.get_real() >> i) & 1, (val.get_real() >> i) & 1) for i in range(len(bits))]
+                bitvars = [new_const((val.get_real() >> i) & 1) for i in range(len(bits))]
             else:
                 bitvars = [new_temp((val.get_real() >> i) & 1) for i in range(len(bits))]
                 for i, bitvar in enumerate(bitvars):
-                    eqs.append(new_multiplication(bitvar, bitvar - Linear(1,1)))
+                    eqs.append(new_multiplication(bitvar, bitvar - new_const(1)))
                     val = val - bitvar * (1 << i)
                 eqs.append(val)
             for i in range(len(bits)):
@@ -302,7 +305,7 @@ def parse_statement(s):
                 assert(bit.get_real() == 0 or bit.get_real() == 1)
                 real = real + bit.get_real() * (1 << i)
             if all(bit.is_const() for bit in bits):
-                val = Linear(real, real)
+                val = new_const(real)
                 varset[left] = val
             else:
                 val = new_temp(real)
@@ -348,7 +351,7 @@ def pivot_variable(eqs, vnam, eliminate=False):
 def encode_andytoshi_format():
     global eqs
     global mul_count
-    ret = "%i,0,%i;" % (mul_count, len(eqs))
+    ret = "%i,0,%i;" % (1<<(mul_count-1).bit_length(), len(eqs))
     for eq in eqs:
         for pos, (name, val) in enumerate(eq.var.items()):
             ret += " "
@@ -373,6 +376,12 @@ def encode_andytoshi_format():
         ret += "%i;" % val
     return ret
 
+def encode_scalar_const(v):
+    if (v < 100):
+        return ("SECP256K1_SCALAR_CONST(0, 0, 0, 0, 0, 0, 0, %i)" % v)
+    vals = [(v >> (32 * (7 - i))) & 0xFFFFFFFF for i in range(8)]
+    return ("SECP256K1_SCALAR_CONST(0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x)" % (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7]))
+
 start = time.clock()
 print("[%f] Parsing..." % 0)
 for line in sys.stdin:
@@ -382,7 +391,7 @@ print("[%f] %i multiplications, %i temporaries, %i constraints, %i cost" % (time
 
 print("[%f] Eliminating..." % (time.clock() - start))
 tock = time.clock()
-for tnum in range(1, temp_count + 1):
+for tnum in range(0, temp_count):
     pivot_variable(eqs, "T%i" % tnum, True)
     now = time.clock()
     if (now - tock > 10):
@@ -400,7 +409,7 @@ for i in range(5*mul_count):
         tock = now
         print("[%f] Reduced to %i cost (step %i/%i)" % (now - start, eqs_cost, i, mul_count * 5))
     for j in range(4):
-        vnam = random.choice(["L%i","R%i","O%i"]) % (1 + random.randrange(mul_count))
+        vnam = random.choice(["L%i","R%i","O%i"]) % random.randrange(mul_count)
         pivot_variable(neweqs, vnam)
         neweqs_cost = sum(eq.cost for eq in neweqs)
         if neweqs_cost < eqs_cost:
@@ -445,7 +454,6 @@ print(encode_andytoshi_format())
 
 print()
 print("Secret inputs:")
-for i in range(1, mul_count + 1):
-    print("L%i = %i" % (i, mul_data[i-1][0]))
-    print("R%i = %i" % (i, mul_data[i-1][1]))
-    print("O%i = %i" % (i, mul_data[i-1][2]))
+print("L = {%s}" % (", ".join(encode_scalar_const(mul_data[i][0]) for i in range(mul_count))))
+print("R = {%s}" % (", ".join(encode_scalar_const(mul_data[i][1]) for i in range(mul_count))))
+print("O = {%s}" % (", ".join(encode_scalar_const(mul_data[i][2]) for i in range(mul_count))))
