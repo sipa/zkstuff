@@ -1,4 +1,5 @@
 import hashlib
+import random
 
 p = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 F = GF(p)
@@ -7,7 +8,7 @@ n = E.order()
 S = GF(n)
 half = 1 / S(2)
 
-bits = [0]*510
+bits = [random.randrange(2) for i in range(510)]
 
 def hash_to_point(m):
     h = hashlib.sha256()

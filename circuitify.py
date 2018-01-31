@@ -3,8 +3,37 @@
 import re
 import sys
 import time
+import random
 
 MODULUS = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+COST_SCALAR_MUL = 100
+COST_SCALAR_NEG = 10
+COST_SCALAR_COPY = 1
+
+def equation_cost(var):
+    if len(var) == 0:
+        return 0
+    total = 0
+    negs = dict()
+    counts = dict()
+    high = 0
+    for name, val in var.items():
+        total += 1
+        negate = 0
+        if MODULUS - val < val:
+            val = MODULUS - val
+            negate = 1
+        if val in counts:
+            counts[val] += 1
+            negs[val] += negate
+        else:
+            counts[val] = 1
+            negs[val] = negate
+        if counts[val] > high:
+            high = val
+    plus_one = max(negs[high], counts[high] - negs[high])
+    neg_one = counts[high] - plus_one
+    return COST_SCALAR_MUL * (total - plus_one - neg_one) + COST_SCALAR_NEG * neg_one + COST_SCALAR_COPY
 
 def modinv(n):
     assert(n != 0)
@@ -28,6 +57,7 @@ class Linear:
                 else:
                     del var[name]
         self.var = var
+        self.cost = equation_cost(var)
 
     def __str__(self):
         terms = []
@@ -207,9 +237,11 @@ def parse_expression(s):
         r = parse_expression(right)
         if op == '*':
             ret = new_multiplication(l, r)
-            assert(ret.get_real() == l.get_real() * r.get_real())
+            assert(ret.get_real() == (l.get_real() * r.get_real()) % MODULUS)
             return ret
         else:
+            ret = new_division(l, r)
+            assert(l.get_real() == (ret.get_real() * r.get_real()) % MODULUS)
             return new_division(l, r)
     if s[0] == '-':
         return parse_expression(s[1:]) * (MODULUS - 1)
@@ -312,6 +344,7 @@ def pivot_variable(eqs, vnam, eliminate=False):
     if eliminate and cc > 0:
         del eqs[low]
 
+
 def encode_andytoshi_format():
     global eqs
     global mul_count
@@ -345,7 +378,7 @@ print("[%f] Parsing..." % 0)
 for line in sys.stdin:
     parse_statement(line)
 
-print("[%f] %i multiplications, %i temporaries, %i constraints" % (time.clock() - start, mul_count, temp_count, len(eqs)))
+print("[%f] %i multiplications, %i temporaries, %i constraints, %i cost" % (time.clock() - start, mul_count, temp_count, len(eqs), sum(eq.cost for eq in eqs)))
 
 print("[%f] Eliminating..." % (time.clock() - start))
 tock = time.clock()
@@ -356,16 +389,26 @@ for tnum in range(1, temp_count + 1):
         tock = now
         print("[%f] Eliminated %i/%i" % (now - start, tnum, temp_count))
 
-print("[%f] %i multiplications, %i constraints" % (time.clock() - start, mul_count, len(eqs)))
+eqs_cost = sum(eq.cost for eq in eqs)
+print("[%f] %i multiplications, %i constraints, %i cost" % (time.clock() - start, mul_count, len(eqs), eqs_cost))
+print("[%f] Reducing..." % (time.clock() - start))
+tock = time.clock()
+for i in range(5*mul_count):
+    neweqs = eqs.copy()
+    now = time.clock()
+    if (now - tock > 20):
+        tock = now
+        print("[%f] Reduced to %i cost (step %i/%i)" % (now - start, eqs_cost, i, mul_count * 5))
+    for j in range(4):
+        vnam = random.choice(["L%i","R%i","O%i"]) % (1 + random.randrange(mul_count))
+        pivot_variable(neweqs, vnam)
+        neweqs_cost = sum(eq.cost for eq in neweqs)
+        if neweqs_cost < eqs_cost:
+            eqs = neweqs
+            eqs_cost = neweqs_cost
+            break
 
-#print("[%f] Reducing..." % (time.clock() - start))
-#tock = time.clock()
-#for idx, vnam in enumerate(["L%i" % i for i in range(1, mul_count + 1)] + ["R%i" % i for i in range(1, mul_count + 1)] + ["O%i" % i for i in range(1, mul_count + 1)]):
-#    pivot_variable(eqs, vnam)
-#    now = time.clock()
-#    if (now - tock > 10):
-#        tock = now
-#        print("[%f] Reduced %i/%i" % (now - start, idx, mul_count * 3))
+print("[%f] %i multiplications, %i constraints, %i cost" % (time.clock() - start, mul_count, len(eqs), eqs_cost))
 
 print("[%f] Maximizing 1s..." % (time.clock() - start))
 neweqs = eqs
