@@ -171,6 +171,7 @@ def new_const(val):
 def new_multiplication(l, r):
     global cache
     global eqs
+    global varset
     if l.is_const():
         return r * l.get_const()
     if r.is_const():
@@ -181,6 +182,11 @@ def new_multiplication(l, r):
     if key in cache:
         return cache[key]
     lv, rv, ret = new_mul(l.get_real(), r.get_real())
+#    for var in varset:
+#        if varset[var] == l:
+#            varset[var] = lv
+#        if varset[var] == r:
+#            varset[var] = rv
     assert(l.get_real() == lv.get_real())
     assert(r.get_real() == rv.get_real())
     eqs.append(l - lv)
@@ -191,12 +197,18 @@ def new_multiplication(l, r):
 def new_division(l, r):
     global cache
     global eqs
+    global varset
     if r.is_const():
         return l / r.get_const()
     key = "%s {/} %s" % (l, r)
     if key in cache:
         return cache[key]
     ret, rv, lv = new_mul(l.get_real() * modinv(r.get_real()), r.get_real())
+#    for var in varset:
+#        if varset[var] == l:
+#            varset[var] = lv
+#        if varset[var] == r:
+#            varset[var] = rv
     assert(l.get_real() == lv.get_real())
     assert(r.get_real() == rv.get_real())
     eqs.append(l - lv)
@@ -245,6 +257,11 @@ def parse_expression(s):
             ret = new_division(l, r)
             assert(l.get_real() == (ret.get_real() * r.get_real()) % MODULUS)
             return new_division(l, r)
+    if len(s) > 5 and s[:5] == 'bool(':
+        ret = parse_expression(s[4:])
+        m = new_multiplication(ret, ret - new_const(1))
+        eqs.append(m)
+        return ret
     if s[0] == '-':
         return parse_expression(s[1:]) * (MODULUS - 1)
     if VAR_RE.fullmatch(s):
@@ -401,12 +418,12 @@ eqs_cost = sum(eq.cost for eq in eqs)
 print("[%f] %i multiplications, %i constraints, %i cost" % (time.clock() - start, mul_count, len(eqs), eqs_cost))
 print("[%f] Reducing..." % (time.clock() - start))
 tock = time.clock()
-for i in range(5*mul_count):
+for i in range(mul_count):
     neweqs = eqs.copy()
     now = time.clock()
     if (now - tock > 20):
         tock = now
-        print("[%f] Reduced to %i cost (step %i/%i)" % (now - start, eqs_cost, i, mul_count * 5))
+        print("[%f] Reduced to %i cost (step %i/%i)" % (now - start, eqs_cost, i, mul_count))
     for j in range(4):
         vnam = random.choice(["L%i","R%i","O%i"]) % random.randrange(mul_count)
         pivot_variable(neweqs, vnam)

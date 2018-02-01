@@ -84,29 +84,35 @@ for round in range(len(bits)/3):
 assert(T1 == T2)
 assert(T1 == T3)
 
-print("x1 = %i" % B[0][0])
-print("y1 = %i" % B[0][1])
 
 # A*x*y + B*x*(1-y) + C*(1-x)*y + D*(1-x)*(1-y) =
 # D + (B-D)x + (C-D)y + (A-B-C+D)xy
 
-A1 = B[0]
-for round in range(len(bits)/3):
-    print("b0 = #%i" % bits[3 * round])
-    print("b1 = #%i" % bits[3 * round + 1])
-    print("b2 = #%i" % bits[3 * round + 2])
-    print("b0 * (1 - b0) == 0")
-    print("b1 * (1 - b1) == 0")
-    print("b2 * (1 - b2) == 0")
+# yd = y2 - y1
+# xd = x2 - x1
+# lambda = yd / xd
+# x3 = lambda^2 - 2*x2 + xd
+# y3 = lambda*(x2 - x3) - y2
+
+rounds = len(bits)/3
+for round in range(rounds):
+    print("b%i = bool(#%i)" % (3 * round, bits[3 * round]))
+    print("b%i = bool(#%i)" % (3 * round + 1, bits[3 * round + 1]))
+    print("b%i = bool(#%i)" % (3 * round + 2, bits[3 * round + 2]))
+for round in range(rounds):
     P0 = B[1 + 3*round]
     P1 = B[2 + 3*round]
     P2 = B[3 + 3*round]
     R = [P0+P1+P2, -P0+P1+P2, P0-P1+P2, -P0-P1+P2]
-    print("x2 = %i + %i * b0 + %i * b1 + %i * (b0 * b1)" % (R[0][0], R[1][0] - R[0][0], R[2][0] - R[0][0], R[0][0] - R[1][0] - R[2][0] + R[3][0]))
-    print("y2 = (2*b2 - 1) * (%i + %i * b0 + %i * b1 + %i * (b0 * b1))" % (R[0][1], R[1][1] - R[0][1], R[2][1] - R[0][1], R[0][1] - R[1][1] - R[2][1] + R[3][1]))
-    print("lambda = (y2 - y1) / (x2 - x1)")
-    print("x3 = lambda * lambda - x1 - x2")
-    print("y3 = lambda * (x1 - x3) - y1")
-    print("x1 = x3")
-    print("y1 = y3")
-print("x1 == %i" % T1[0])
+    print("inner = b%i * b%i" % (3 * round, 3 * round + 1))
+    print("x%i = %i + %i * b%i + %i * b%i + %i * inner" % (round, R[0][0], R[1][0] - R[0][0], 3 * round, R[2][0] - R[0][0], 3 * round + 1, R[0][0] - R[1][0] - R[2][0] + R[3][0]))
+    print("y%i = (2*b%i - 1) * (%i + %i * b%i + %i * b%i + %i * inner)" % (round, 3 * round + 2, R[0][1], R[1][1] - R[0][1], 3 * round, R[2][1] - R[0][1], 3 * round + 1, R[0][1] - R[1][1] - R[2][1] + R[3][1]))
+print("x = %i" % B[0][0])
+print("y = %i" % B[0][1])
+for round in range(rounds):
+    print("xd = x%i - x" % round)
+    print("yd = y%i - y" % round)
+    print("lambda = yd / xd")
+    print("x = lambda*lambda - 2*x%i + xd" % round)
+    print("y = lambda*(x%i - x) - y%i" % (round, round))
+print("x == %i" % T1[0])
