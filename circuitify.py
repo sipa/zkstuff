@@ -299,7 +299,7 @@ def parse_statement(s):
                 if not VAR_RE.fullmatch(bit):
                     raise Exception("Bit '%s' is not a valid name in %s" % (bit, op))
             val = parse_expression(right)
-            assert(len(bits) < 256) # don't support less-than constraint
+            assert(len(bits) <= 256) # don't support less-than constraint
             assert(val.get_real() >> len(bits) == 0)
             if val.is_const():
                 bitvars = [new_const((val.get_real() >> i) & 1) for i in range(len(bits))]
@@ -315,7 +315,7 @@ def parse_statement(s):
             bits = parse_expressions(right)
             if not VAR_RE.fullmatch(left):
                 raise Exception("Int '%s' is not a valid name in %s" % (left, op))
-            assert(len(bits) < 256)
+            assert(len(bits) <= 256)
             real = 0
             for i, bit in enumerate(bits):
                 assert(bit.get_real() == 0 or bit.get_real() == 1)
@@ -369,6 +369,7 @@ def encode_andytoshi_format():
     global mul_count
     ret = "%i,0,%i;" % (1<<(mul_count-1).bit_length(), len(eqs))
     for eq in eqs:
+        assert(eq.get_real() == 0)
         for pos, (name, val) in enumerate(eq.var.items()):
             ret += " "
             negative = False
@@ -418,12 +419,12 @@ eqs_cost = sum(eq.cost for eq in eqs)
 print("[%f] %i multiplications, %i constraints, %i cost" % (time.clock() - start, mul_count, len(eqs), eqs_cost))
 print("[%f] Reducing..." % (time.clock() - start))
 tock = time.clock()
-for i in range(mul_count):
+for i in range(mul_count // 10):
     neweqs = eqs.copy()
     now = time.clock()
     if (now - tock > 20):
         tock = now
-        print("[%f] Reduced to %i cost (step %i/%i)" % (now - start, eqs_cost, i, mul_count))
+        print("[%f] Reduced to %i cost (step %i/%i)" % (now - start, eqs_cost, i, mul_count // 10))
     for j in range(4):
         vnam = random.choice(["L%i","R%i","O%i"]) % random.randrange(mul_count)
         pivot_variable(neweqs, vnam)
